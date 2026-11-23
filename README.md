@@ -22,7 +22,7 @@ Every square is a **check first**. Pressing **re-check** reads the real state of
 Everything runs on your computer:
 
 - **Your DigitalOcean token** is held by [doctl](https://docs.digitalocean.com/reference/doctl/), DigitalOcean's own command-line tool, in its settings on your computer. This mod never stores it, reads it back or sends it anywhere: it only runs doctl.
-- **Your SSH key** is your own. The mod adds its public half to your DigitalOcean account; the private half never leaves your machine.
+- **The SSH key** is made on your computer for this mod and kept in its folder (or you name your own in the mod's settings). Its public half goes to your DigitalOcean account; the private half never leaves your machine.
 - **Your wallet** signs in your own browser, on the validator's own page, reached through an SSH tunnel to your server.
 - **Nothing on the server reports anywhere.** The pane reads the server's state over your own SSH connection when you look.
 
@@ -53,9 +53,9 @@ Optional: a token with custom scopes limited to what this needs (droplets, SSH k
 | Square | Green when | What fixes it |
 | --- | --- | --- |
 | doctl | doctl is installed and signed in to your account | **install doctl**, then paste a token or **copy sign-in command** |
-| ssh key | your key's `.pub` is on your DigitalOcean account | **add my key to DigitalOcean** (makes a key first if you have none) |
+| ssh key | the mod's key is on your DigitalOcean account | **add my key to DigitalOcean** (makes the key the first time) |
 | server | the droplet is active with an address | **+ new server**: pick a region and a size, then **create server** |
-| ssh | the server answers on your key | waits while the server boots |
+| ssh | the server answers on the key | waits while the server boots; goes red at once if the server refuses the key |
 | setup | the install script finished | runs by itself on first boot, about 5 minutes |
 | firewall | only 22 and 4001 (TCP and QUIC) are open | set by the install script |
 | package | the validator is installed and its checksum matched 6529's `SHA256SUMS` | set by the install script; shows when an update is out |

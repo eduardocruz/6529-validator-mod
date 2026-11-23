@@ -57,7 +57,7 @@ const out = (stdout: string, exitCode = 0) => ({
 type On = Parameters<TestBody>[1]
 
 /** The engine beneath the mod: doctl in a given state, plus ssh and the key files. */
-function engine(on: On, doctl: 'missing' | 'signed-out' | 'signed-in', ran: string[][]) {
+function engine(on: On, doctl: 'missing' | 'signed-out' | 'signed-in', ran: string[][], sshRefused = false) {
   on('command.register', () => ({ value: { command: 'validator' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('clock.every', () => ({ value: undefined }))
@@ -72,7 +72,11 @@ function engine(on: On, doctl: 'missing' | 'signed-out' | 'signed-in', ran: stri
     if (cmd === 'printenv') return out('/home/holder\n')
     if (cmd === 'cat') return out('ssh-ed25519 AAAA holder\n')
     if (cmd === 'ssh-keygen') return out('256 MD5:aa:bb holder (ED25519)\n')
-    if (cmd === 'ssh') return out(PROBE_OUT)
+    if (cmd === 'ssh') {
+      return sshRefused
+        ? { value: { exitCode: 255, stdout: '', stderr: 'root@203.0.113.9: Permission denied (publickey).\n', isStdoutTruncated: false, isStderrTruncated: false } }
+        : out(PROBE_OUT)
+    }
 
     if (cmd === BIN && doctl !== 'missing') {
       if (rest[0] === 'version') return out('doctl version 2.7.0-release\n')
@@ -107,10 +111,10 @@ test('signed in, a fresh server walks to the tunnel square, on every surface', a
     await ui.unmount()
   }
 
-  // The probe reaches the server as root over the holder's own key, with a known_hosts of the mod's own.
+  // The probe reaches the server as root over the mod's own key, with a known_hosts of the mod's own.
   const ssh = ran.find((argv) => argv[0] === 'ssh')
   expect(ssh).toContain('root@203.0.113.9')
-  expect(ssh).toContain('/home/holder/.ssh/id_ed25519')
+  expect(ssh).toContain('/data/ssh/id_ed25519')
   expect(ssh).toContain('UserKnownHostsFile=/data/known_hosts')
 })
 
@@ -141,5 +145,20 @@ test('signed out, the token goes to doctl auth init and nowhere else', async ($,
 
   const withToken = ran.filter((argv) => argv.includes('dop_v1_secret'))
   expect(withToken).toEqual([[BIN, 'auth', 'init', '--access-token', 'dop_v1_secret']])
+  await ui.unmount()
+})
+
+test('a refused key turns ssh red at once, even on a brand-new server', async ($, on) => {
+  const ran: string[][] = []
+  DOCTL['compute droplet list'] = [{ ...(DOCTL['compute droplet list'] as object[])[0], created_at: new Date().toISOString() }]
+  engine(on, 'signed-in', ran, true)
+  await start($)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'recheck' })
+
+  const next = (await ui.find({ type: 'Text', text: /^next/ }))?.text ?? ''
+  expect(next).toContain('refused the key')
+  expect(next).not.toContain('still starting')
   await ui.unmount()
 })

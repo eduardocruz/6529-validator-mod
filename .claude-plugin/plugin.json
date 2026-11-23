@@ -1,6 +1,6 @@
 {
   "name": "6529-validator-mod",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Set up and watch a 6529 validator on your own DigitalOcean server, step by step in a pane beside the chat. Uses DigitalOcean's own doctl; the mod never holds your token or keys.",
   "author": {
     "name": "Eduardo Cruz",
@@ -16,9 +16,9 @@
   "userConfig": {
     "sshKey": {
       "type": "string",
-      "title": "SSH key",
-      "description": "The private key used to reach your server. Its .pub beside it is the one added to DigitalOcean.",
-      "default": "~/.ssh/id_ed25519",
+      "title": "SSH key (optional)",
+      "description": "Leave empty to use the mod's own key, made for this and kept in the mod's folder. Or name your own private key, for example ~/.ssh/id_ed25519; a key with a passphrase must be loaded with ssh-add first.",
+      "default": "",
       "required": false
     }
   },

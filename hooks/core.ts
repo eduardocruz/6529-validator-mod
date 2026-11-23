@@ -424,7 +424,7 @@ export function serverSquares(server: Server, probe: Probe | { sshError: string 
   }
 
   if ('sshError' in probe) {
-    checks.ssh = young ? wait('the server is still starting') : bad(probe.sshError)
+    checks.ssh = sshSquare(probe.sshError, young)
     return checks
   }
 
@@ -508,6 +508,20 @@ export const lastLine = (text: string) =>
     .split('\n')
     .filter((l) => l.trim())
     .pop() ?? ''
+
+/**
+ * Only a server that is not answering yet is "starting". A refused key is the
+ * holder's to fix now, and waiting would hide it.
+ */
+export function sshSquare(error: string, young: boolean): Square {
+  if (/Permission denied/i.test(error)) {
+    return bad('the server refused the key. A key with a passphrase needs `ssh-add <key>` first, or use the mod\'s own key (leave the SSH key setting empty)')
+  }
+  if (young && /refused|timed out|No route|not known|Connection closed|reset/i.test(error)) {
+    return wait('the server is still starting')
+  }
+  return young && !error ? wait('the server is still starting') : bad(error || 'SSH did not connect')
+}
 
 const short = (address: string | null | undefined) =>
   address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'your wallet'

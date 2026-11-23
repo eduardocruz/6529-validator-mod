@@ -70,7 +70,7 @@ let paneOpen = false
 
 /** The options, read once per load of the module. */
 // The validator's page checks the port in its address, so the tunnel's local end must be the same port.
-const cfg = { sshKey: '~/.ssh/id_ed25519', localPort: REMOTE_PAGE_PORT }
+const cfg = { sshKey: '', localPort: REMOTE_PAGE_PORT }
 
 // ------------------------------------------------------------ adapters
 
@@ -94,8 +94,10 @@ async function home($: EngineInterface) {
 
 async function paths($: EngineInterface) {
   const env = await $.process.hookEnv()
+  const data = env.CLAUDE_PLUGIN_DATA ?? '/tmp/6529-validator-mod'
   return {
-    key: expandHome(cfg.sshKey, await home($)),
+    // The mod's own key by default: no passphrase prompt can stall a check or the tunnel.
+    key: cfg.sshKey ? expandHome(cfg.sshKey, await home($)) : `${data}/ssh/id_ed25519`,
     knownHosts: `${env.CLAUDE_PLUGIN_DATA ?? '/tmp'}/known_hosts`,
     dataDir: env.CLAUDE_PLUGIN_DATA ?? '/tmp/6529-validator-mod',
   }
@@ -329,13 +331,13 @@ async function openPage($: EngineInterface, server: Server) {
 }
 
 /** What the pane cannot judge goes to Claude, with what the squares and the log say. */
-function diagnose($: EngineInterface, server: Server, checks: Checks, tail: string) {
+async function diagnose($: EngineInterface, server: Server, checks: Checks, tail: string) {
   const lines = SERVER_SQUARES.map((s) => `- ${s.label}: ${checks[s.id]?.state ?? 'gray'} — ${checks[s.id]?.note ?? ''}`)
   const text = [
     `My 6529 validator server ${server.name} (${server.ip ?? 'no IP'}, ${server.region}, ${server.size}) has a step that is not done. The 6529-validator-mod pane shows:`,
     ...lines,
     tail ? `\nLast lines of /var/log/6529-validator-setup.log:\n\`\`\`\n${tail}\n\`\`\`` : '',
-    `\nI can reach it with \`ssh -i ${cfg.sshKey} root@${server.ip}\`. Diagnose what went wrong and tell me the fix. Do not change anything on the server until I agree, and never touch the validator's key or run \`validator init --force\` once a key exists.`,
+    `\nI can reach it with \`ssh -i ${(await paths($)).key} root@${server.ip}\`. Diagnose what went wrong and tell me the fix. Do not change anything on the server until I agree, and never touch the validator's key or run \`validator init --force\` once a key exists.`,
   ].join('\n')
 
   return $.prompt.submit({ text })
@@ -359,7 +361,7 @@ function act($: EngineInterface, label: string, work: () => Promise<unknown>) {
 }
 
 export const register: Register = (on, options) => {
-  cfg.sshKey = String(options.sshKey ?? '~/.ssh/id_ed25519')
+  cfg.sshKey = String(options.sshKey ?? '').trim()
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
