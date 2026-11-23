@@ -33,13 +33,13 @@ There is no service in the middle, no account to create, and no one to trust but
 At the prompt of a Claude Code session in a terminal:
 
 ```
-/plugin install 6529-validator-mod --marketplace eduardocruz/6529-validator-mod
+/plugin install 6529-validator-mod --marketplace eduardocruz/marketplace
 ```
 
 From a shell:
 
 ```
-claude plugin install 6529-validator-mod --marketplace eduardocruz/6529-validator-mod
+claude plugin install 6529-validator-mod --marketplace eduardocruz/marketplace
 ```
 
 Answer `y` to add the marketplace and choose a scope. Then type `/validator`.
