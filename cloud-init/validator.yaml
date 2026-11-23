@@ -1,0 +1,61 @@
+#cloud-config
+# Installs the 6529 Validator in data-center mode on a fresh Ubuntu server.
+# The 6529-validator-mod sends this file, unchanged, as the server's user data.
+# Nothing in it reports anywhere: the mod reads the server's state over your
+# own SSH connection. Your SSH key is added by DigitalOcean, not by this file.
+ssh_pwauth: false
+disable_root: false
+write_files:
+  - path: /usr/local/sbin/install-6529-validator.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      # The 6529 Validator the way 6529.io/validator describes it, in data-center mode.
+      set -euo pipefail
+      exec >>/var/log/6529-validator-setup.log 2>&1
+      export DEBIAN_FRONTEND=noninteractive
+      echo "== setup started $(date -u)"
+
+      # DigitalOcean can leave root's password marked expired, which makes the
+      # package's adduser step fail (chfn: "Authentication token is no longer
+      # valid"). Root logs in by key only, so clear the expiry.
+      chage -d "$(date +%Y-%m-%d)" -M -1 root
+
+      # Firewall first: SSH, and the validator's peer port (TCP and QUIC).
+      # The validator's page stays on 127.0.0.1 and is reached through a tunnel.
+      apt-get update -y
+      apt-get install -y ufw curl ca-certificates
+      ufw default deny incoming
+      ufw default allow outgoing
+      ufw allow 22/tcp
+      ufw allow 4001/tcp
+      ufw allow 4001/udp
+      ufw --force enable
+
+      # The newest release named on 6529.io/validator (amd64), checked against
+      # 6529's SHA256SUMS before it is installed.
+      page=$(curl -fsSL https://6529.io/validator)
+      path=$(printf '%s' "$page" | grep -oE '/validator/download/[^"\\ <]+_amd64\.deb' | head -n1)
+      test -n "$path"
+      file=$(basename "$path")
+      dir=$(dirname "$path")
+      mkdir -p /root/6529
+      cd /root/6529
+      curl -fsSL -o "$file" "https://6529.io$path"
+      curl -fsSL -o SHA256SUMS "https://6529.io$dir/SHA256SUMS"
+      grep -F "$file" SHA256SUMS | sha256sum -c -
+      apt-get install -y "./$file"
+
+      # The package starts a home validator (Tor on, votes only). On a server it
+      # should be a data-center one, with a page port we know. No key exists
+      # yet, so --force only rewrites the configuration.
+      systemctl stop 6529-validator.service || true
+      runuser -u validator6529 -- validator init --mode datacenter --force --data-dir /var/lib/6529-validator --ui-bind 127.0.0.1:16529
+      systemctl enable --now 6529-validator.service
+      sleep 20
+      systemctl is-active --quiet 6529-validator.service
+
+      echo "== setup finished $(date -u)"
+      touch /var/lib/6529-validator-setup.done
+runcmd:
+  - [bash, -c, "/usr/local/sbin/install-6529-validator.sh || touch /var/lib/6529-validator-setup.failed"]
