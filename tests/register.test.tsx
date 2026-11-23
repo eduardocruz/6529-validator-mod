@@ -57,7 +57,7 @@ const out = (stdout: string, exitCode = 0) => ({
 type On = Parameters<TestBody>[1]
 
 /** The engine beneath the mod: doctl in a given state, plus ssh and the key files. */
-function engine(on: On, doctl: 'missing' | 'signed-out' | 'signed-in', ran: string[][], sshRefused = false) {
+function engine(on: On, doctl: 'missing' | 'signed-out' | 'signed-in', ran: string[][], sshRefused = false, foreignKey = false) {
   on('command.register', () => ({ value: { command: 'validator' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('clock.every', () => ({ value: undefined }))
@@ -70,6 +70,7 @@ function engine(on: On, doctl: 'missing' | 'signed-out' | 'signed-in', ran: stri
     const [cmd, ...rest] = argv
 
     if (cmd === 'printenv') return out('/home/holder\n')
+    if (cmd === 'test' && foreignKey) return out('', rest[0] === '-L' ? 1 : rest[0] === '-O' ? 1 : 0)
     if (cmd === 'cat') return out('ssh-ed25519 AAAA holder\n')
     if (cmd === 'ssh-keygen') return out('256 MD5:aa:bb holder (ED25519)\n')
     if (cmd === 'ssh') {
@@ -160,5 +161,18 @@ test('a refused key turns ssh red at once, even on a brand-new server', async ($
   const next = (await ui.find({ type: 'Text', text: /^next/ }))?.text ?? ''
   expect(next).toContain('refused the key')
   expect(next).not.toContain('still starting')
+  await ui.unmount()
+})
+
+test('a key file the user does not own is refused, and nothing reaches the server', async ($, on) => {
+  const ran: string[][] = []
+  engine(on, 'signed-in', ran, false, true)
+  await start($)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'recheck' })
+
+  expect((await ui.find({ type: 'Text', text: /^next/ }))?.text).toContain('not a file you own')
+  expect(ran.some((argv) => argv[0] === 'ssh')).toBe(false)
   await ui.unmount()
 })

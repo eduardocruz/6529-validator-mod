@@ -94,12 +94,32 @@ async function home($: EngineInterface) {
 
 async function paths($: EngineInterface) {
   const env = await $.process.hookEnv()
-  const data = env.CLAUDE_PLUGIN_DATA ?? '/tmp/6529-validator-mod'
+  // Never a shared folder like /tmp: the mod's key, known_hosts and doctl live here.
+  const data = env.CLAUDE_PLUGIN_DATA || `${await home($)}/.local/share/6529-validator-mod`
   return {
     // The mod's own key by default: no passphrase prompt can stall a check or the tunnel.
     key: cfg.sshKey ? expandHome(cfg.sshKey, await home($)) : `${data}/ssh/id_ed25519`,
-    knownHosts: `${env.CLAUDE_PLUGIN_DATA ?? '/tmp'}/known_hosts`,
-    dataDir: env.CLAUDE_PLUGIN_DATA ?? '/tmp/6529-validator-mod',
+    knownHosts: `${data}/known_hosts`,
+    dataDir: data,
+  }
+}
+
+/** The key folder is the user's alone, and a key is used only if it is a real file of theirs. */
+async function guardKey($: EngineInterface, key: string) {
+  const run = runner($)
+  const dir = key.replace(/\/[^/]+$/, '')
+  if (!cfg.sshKey) {
+    await run(['mkdir', '-p', dir])
+    await run(['chmod', '700', dir])
+  }
+  for (const file of [key, `${key}.pub`]) {
+    const exists = await run(['test', '-e', file])
+    if (exists.exitCode !== 0) continue
+    const mine = await run(['test', '-O', file])
+    const link = await run(['test', '-L', file])
+    if (mine.exitCode !== 0 || link.exitCode === 0) {
+      throw new Error(`${file} is not a file you own (or is a link); the mod will not use it`)
+    }
   }
 }
 
@@ -125,6 +145,14 @@ async function refresh($: EngineInterface) {
 
   if (!doctl || found.square.state !== 'green') {
     await setBoard($, (b) => ({ ...b, account, servers: [], byServer: {}, at: new Date().toISOString() }))
+    return
+  }
+
+  try {
+    await guardKey($, key)
+  } catch (cause) {
+    account.key = { state: 'red', note: message(cause) }
+    await setBoard($, (b) => ({ ...b, account, at: new Date().toISOString() }))
     return
   }
 
@@ -228,9 +256,9 @@ async function addKey($: EngineInterface) {
   const { key } = await paths($)
   const doctl = await doctlOf($)
 
+  await guardKey($, key)
   const exists = await run(['test', '-f', `${key}.pub`])
   if (exists.exitCode !== 0) {
-    await run(['mkdir', '-p', key.replace(/\/[^/]+$/, '')])
     const made = await run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-C', '6529-validator', '-f', key])
     if (made.exitCode !== 0) throw new Error(`ssh-keygen: ${lastLine(made.stderr)}`)
   }
