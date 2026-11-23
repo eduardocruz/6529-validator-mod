@@ -248,7 +248,7 @@ async function refresh($: EngineInterface) {
     }),
   )
 
-  await setBoard($, () => ({ account, servers, byServer, logTail, regions, sizes, at: new Date().toISOString() }))
+  await setBoard($, () => ({ account, servers, byServer, logTail, regions, sizes, keyPath: key, at: new Date().toISOString() }))
 
   const current = await read($, selected)
   if (!current || (current !== 'new' && !servers.some((s) => String(s.id) === current))) {

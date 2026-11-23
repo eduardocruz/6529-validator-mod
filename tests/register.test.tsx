@@ -54,6 +54,7 @@ type World = {
   passphrase?: boolean
   storedKey?: string
   newServer?: boolean
+  keyNotOnDo?: boolean
 }
 
 /** The engine beneath the mod: doctl in a given state, ssh, the key files and the store. */
@@ -102,7 +103,7 @@ function engine(on: On, world: World, ran: string[][], stored: Record<string, un
       const command = words.slice(0, words[0] === 'account' ? 2 : 3).join(' ')
       const answers: Record<string, unknown> = {
         'account get': { status: 'active', email: 'holder@example.com' },
-        'compute ssh-key list': [{ id: 7, fingerprint: 'aa:bb', name: 'laptop' }],
+        'compute ssh-key list': world.keyNotOnDo ? [] : [{ id: 7, fingerprint: 'aa:bb', name: 'laptop' }],
         'compute droplet list': [droplet(world.newServer ? new Date().toISOString() : '2026-01-01T00:00:00Z')],
         'compute region list': [{ slug: 'fra1', name: 'Frankfurt 1', available: true, sizes: ['s-4vcpu-8gb'] }],
         'compute size list': [{ slug: 's-4vcpu-8gb', memory: 8192, vcpus: 4, disk: 160, price_monthly: 48 }],
@@ -161,6 +162,21 @@ test('with no key chosen, the pane asks for one and reads only its public half',
 
   expect(stored['ssh-key-path']).toBe('~/.ssh/holder')
   expect(ran).toContainEqual(['ssh-keygen', '-y', '-P', '', '-f', KEY])
+  await ui.unmount()
+})
+
+test('once a key is chosen but not on DigitalOcean, the pane offers to add it and hides the form', async ($, on) => {
+  const ran: string[][] = []
+  engine(on, { doctl: 'signed-in', storedKey: '~/.ssh/holder', keyNotOnDo: true }, ran)
+  await start($)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'recheck' })
+
+  expect(await next(ui)).toContain('not on your DigitalOcean account')
+  expect(await ui.find({ type: 'Button', key: 'add-key' })).toBeDefined()
+  expect(await ui.find({ type: 'Input', key: 'key-path' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /key: .*\.ssh\/holder/ })).toBeDefined()
   await ui.unmount()
 })
 
