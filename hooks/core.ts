@@ -271,33 +271,44 @@ export const nextName = (servers: Server[], region: string) => {
 export const expandHome = (path: string, home: string) => (path.startsWith('~/') ? `${home}${path.slice(1)}` : path)
 
 /**
- * The key square: the private key and its .pub exist here, and the .pub is on
- * the DigitalOcean account. DigitalOcean names keys by their MD5 fingerprint.
+ * The public half of the holder's private key, the way the browser launcher
+ * read it: derived from the key itself, else the .pub beside it. A key with a
+ * passphrase and no .pub cannot be read without asking for the passphrase.
+ */
+export async function publicKeyOf(run: Run, privateKey: string): Promise<string> {
+  const exists = await run(['test', '-f', privateKey])
+  if (exists.exitCode !== 0) throw new Error(`no private key at ${privateKey}`)
+
+  const derived = await run(['ssh-keygen', '-y', '-P', '', '-f', privateKey])
+  if (derived.exitCode === 0 && derived.stdout.trim().startsWith('ssh-')) return derived.stdout.trim()
+
+  const beside = await run(['cat', `${privateKey}.pub`])
+  if (beside.exitCode === 0 && beside.stdout.trim().startsWith('ssh-')) return beside.stdout.trim()
+
+  throw new Error(
+    `${privateKey} has a passphrase and no .pub beside it. Make one in a terminal with \`ssh-keygen -y -f ${privateKey} > ${privateKey}.pub\`, run \`ssh-add ${privateKey}\`, then press "use this key" again`,
+  )
+}
+
+/**
+ * The key square: the public key (written to `publicKeyFile`) is on the
+ * DigitalOcean account. DigitalOcean names keys by their MD5 fingerprint.
  */
 export async function checkKey(
   run: Run,
   doctl: Doctl,
-  privateKey: string,
-): Promise<{ square: Square; keyId?: number; publicKey?: string }> {
-  const read = await run(['cat', `${privateKey}.pub`])
-
-  if (read.exitCode !== 0) {
-    return { square: bad(`no key at ${privateKey}.pub`) }
-  }
-
-  const publicKey = read.stdout.trim()
-  const print = await run(['ssh-keygen', '-E', 'md5', '-lf', `${privateKey}.pub`])
+  publicKeyFile: string,
+): Promise<{ square: Square; keyId?: number }> {
+  const print = await run(['ssh-keygen', '-E', 'md5', '-lf', publicKeyFile])
   const fingerprint = /MD5:([0-9a-f:]+)/.exec(print.stdout)?.[1]
 
-  if (!fingerprint) {
-    return { square: bad(`could not read ${privateKey}.pub`), publicKey }
-  }
+  if (!fingerprint) return { square: bad('could not read the public key') }
 
   const found = (await doctl.keys()).find((k) => k.fingerprint === fingerprint)
 
   return found
-    ? { square: ok(`on DigitalOcean as "${found.name}"`), keyId: found.id, publicKey }
-    : { square: wait('not on your DigitalOcean account yet'), publicKey }
+    ? { square: ok(`on DigitalOcean as "${found.name}"`), keyId: found.id }
+    : { square: wait('not on your DigitalOcean account yet') }
 }
 
 // ---------------------------------------------------------------- the server

@@ -9,6 +9,7 @@ import {
   REMOTE_PAGE_PORT,
   checkDoctl,
   checkKey,
+  publicKeyOf,
   expandHome,
   firstOpen,
   installDoctl,
@@ -27,7 +28,7 @@ const PANE = 'validator'
 const EMPTY: Board = { account: {}, servers: [], byServer: {}, logTail: {}, regions: [], sizes: [] }
 
 // Values a drawing reads live in $.state: a hot reload keeps them.
-const board = atom({ plugin: '6529-validator-mod', key: 'board' } as const, EMPTY, { shape: 'board-2' })
+const board = atom({ plugin: '6529-validator-mod', key: 'board' } as const, EMPTY, { shape: 'board-3' })
 const selected = atom({ plugin: '6529-validator-mod', key: 'selected' } as const, '')
 const picks = atom({ plugin: '6529-validator-mod', key: 'picks' } as const, { size: 's-4vcpu-8gb' } as Picks)
 const note = atom({ plugin: '6529-validator-mod', key: 'note' } as const, '')
@@ -92,26 +93,29 @@ async function home($: EngineInterface) {
   return (await $.process.run(['printenv', 'HOME'])).stdout.trim()
 }
 
+/** Where the holder's choice of key is kept, across sessions, on this computer only. */
+const KEY_STORE = 'ssh-key-path'
+
 async function paths($: EngineInterface) {
   const env = await $.process.hookEnv()
-  // Never a shared folder like /tmp: the mod's key, known_hosts and doctl live here.
-  const data = env.CLAUDE_PLUGIN_DATA || `${await home($)}/.local/share/6529-validator-mod`
+  const h = await home($)
+  // Never a shared folder like /tmp.
+  const data = env.CLAUDE_PLUGIN_DATA || `${h}/.local/share/6529-validator-mod`
+  const chosen = cfg.sshKey || ((await $.store.get(KEY_STORE)) as string | undefined) || ''
   return {
-    // The mod's own key by default: no passphrase prompt can stall a check or the tunnel.
-    key: cfg.sshKey ? expandHome(cfg.sshKey, await home($)) : `${data}/ssh/id_ed25519`,
+    /** The holder's private key; empty until they choose one. */
+    key: chosen ? expandHome(chosen, h) : '',
+    /** Its public half, derived here, for the fingerprint check and the import. */
+    publicKeyFile: `${data}/key.pub`,
     knownHosts: `${data}/known_hosts`,
     dataDir: data,
+    home: h,
   }
 }
 
-/** The key folder is the user's alone, and a key is used only if it is a real file of theirs. */
+/** A key is used only if it is a real file of the user's own, never a link. */
 async function guardKey($: EngineInterface, key: string) {
   const run = runner($)
-  const dir = key.replace(/\/[^/]+$/, '')
-  if (!cfg.sshKey) {
-    await run(['mkdir', '-p', dir])
-    await run(['chmod', '700', dir])
-  }
   for (const file of [key, `${key}.pub`]) {
     const exists = await run(['test', '-e', file])
     if (exists.exitCode !== 0) continue
@@ -121,6 +125,45 @@ async function guardKey($: EngineInterface, key: string) {
       throw new Error(`${file} is not a file you own (or is a link); the mod will not use it`)
     }
   }
+}
+
+/** Derives the public key and writes it where the checks and the import read it. */
+async function preparePublicKey($: EngineInterface): Promise<{ key: string; publicKeyFile: string }> {
+  const { key, publicKeyFile, dataDir } = await paths($)
+  if (!key) throw new Error('choose the SSH key for your servers first')
+  await guardKey($, key)
+  const publicKey = await publicKeyOf(runner($), key)
+  await runner($)(['mkdir', '-p', dataDir])
+  await $.fs.write(publicKeyFile, `${publicKey}\n`)
+  return { key, publicKeyFile }
+}
+
+/** The holder names their own private key; the mod reads only its public half. */
+async function useKey($: EngineInterface, path: string) {
+  const chosen = path.trim()
+  if (!chosen) throw new Error('give the path to your private key, for example ~/.ssh/id_ed25519')
+  const { home: h } = await paths($)
+  await guardKey($, expandHome(chosen, h))
+  await publicKeyOf(runner($), expandHome(chosen, h))
+  await $.store.set(KEY_STORE, chosen)
+}
+
+/** A new key in ~/.ssh, where it survives the mod and can be backed up like any other. */
+async function makeKey($: EngineInterface) {
+  const run = runner($)
+  const { home: h } = await paths($)
+  const key = `${h}/.ssh/6529-validator`
+  await run(['mkdir', '-p', `${h}/.ssh`])
+  await run(['chmod', '700', `${h}/.ssh`])
+  if ((await run(['test', '-e', key])).exitCode !== 0) {
+    const made = await run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-C', '6529-validator', '-f', key])
+    if (made.exitCode !== 0) throw new Error(`ssh-keygen: ${lastLine(made.stderr)}`)
+  }
+  await $.store.set(KEY_STORE, '~/.ssh/6529-validator')
+}
+
+async function forgetKey($: EngineInterface) {
+  await $.store.delete(KEY_STORE)
 }
 
 async function say($: EngineInterface, text: string) {
@@ -148,16 +191,24 @@ async function refresh($: EngineInterface) {
     return
   }
 
-  try {
-    await guardKey($, key)
-  } catch (cause) {
-    account.key = { state: 'red', note: message(cause) }
-    await setBoard($, (b) => ({ ...b, account, at: new Date().toISOString() }))
+  if (!key) {
+    account.key = { state: 'waiting', note: 'choose the SSH key your servers will trust' }
+    await setBoard($, (b) => ({ ...b, account, keyPath: undefined, servers: [], byServer: {}, at: new Date().toISOString() }))
     return
   }
 
-  const keyCheck = await checkKey(run, doctl, key)
-  account.key = keyCheck.square
+  let keyId: number | undefined
+  try {
+    const { publicKeyFile } = await preparePublicKey($)
+    const keyCheck = await checkKey(run, doctl, publicKeyFile)
+    account.key = keyCheck.square
+    keyId = keyCheck.keyId
+  } catch (cause) {
+    account.key = { state: 'red', note: message(cause) }
+    await setBoard($, (b) => ({ ...b, account, keyPath: key, at: new Date().toISOString() }))
+    return
+  }
+  void keyId
 
   const [servers, regions, sizes] = await Promise.all([
     doctl.servers(),
@@ -252,18 +303,9 @@ async function copySignIn($: EngineInterface, surface: string) {
 }
 
 async function addKey($: EngineInterface) {
-  const run = runner($)
-  const { key } = await paths($)
   const doctl = await doctlOf($)
-
-  await guardKey($, key)
-  const exists = await run(['test', '-f', `${key}.pub`])
-  if (exists.exitCode !== 0) {
-    const made = await run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-C', '6529-validator', '-f', key])
-    if (made.exitCode !== 0) throw new Error(`ssh-keygen: ${lastLine(made.stderr)}`)
-  }
-
-  await doctl.addKey('6529-validator', `${key}.pub`)
+  const { publicKeyFile } = await preparePublicKey($)
+  await doctl.addKey('6529-validator', publicKeyFile)
 }
 
 async function create($: EngineInterface) {
@@ -274,7 +316,8 @@ async function create($: EngineInterface) {
 
   if (!chosen.region) throw new Error('pick a region first')
 
-  const keyCheck = await checkKey(run, doctl, key)
+  const { publicKeyFile } = await preparePublicKey($)
+  const keyCheck = await checkKey(run, doctl, publicKeyFile)
   if (!keyCheck.keyId) throw new Error('add your SSH key to DigitalOcean first')
 
   const servers = await doctl.servers()
@@ -481,10 +524,36 @@ export const register: Register = (on, options) => {
           {b.account.doctl?.state === 'red' && (
             <Button key="install-doctl" label="install doctl" variant="primary" onPress={() => act($, 'installing doctl', () => addDoctl($))} />
           )}
-          {b.account.doctl?.state === 'green' && b.account.key && b.account.key.state !== 'green' && (
+          {b.account.doctl?.state === 'green' && b.keyPath && b.account.key && b.account.key.state !== 'green' && (
             <Button key="add-key" label="add my key to DigitalOcean" onPress={() => act($, 'adding your key', () => addKey($))} />
           )}
         </Box>
+
+        {b.account.doctl?.state === 'green' && !b.keyPath && (
+          <Box flexDirection="column" gap={1}>
+            <Text wrap="wrap">
+              Which SSH key should your servers trust? Give the path to your private key; the mod reads only its public half, and the private key never leaves this computer.
+            </Text>
+            <Input
+              key="key-path"
+              label="private key"
+              placeholder="~/.ssh/id_ed25519"
+              submitLabel="use this key"
+              onSubmit={(value: string) => act($, 'reading your key', () => useKey($, value))}
+            />
+            <Box columnGap={1}>
+              <Text dimColor>or</Text>
+              <Button key="make-key" label="make a new key in ~/.ssh/6529-validator" onPress={() => act($, 'making your key', () => makeKey($))} />
+            </Box>
+          </Box>
+        )}
+
+        {b.keyPath && (
+          <Box columnGap={1}>
+            <Text dimColor wrap="truncate-end">key: {b.keyPath}</Text>
+            <Button key="change-key" label="change" onPress={() => act($, 'forgetting the key choice', () => forgetKey($))} />
+          </Box>
+        )}
 
         {b.account.doctl?.state === 'waiting' && (
           <Box flexDirection="column" gap={1}>

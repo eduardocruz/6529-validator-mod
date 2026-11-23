@@ -22,7 +22,7 @@ Every square is a **check first**. Pressing **re-check** reads the real state of
 Everything runs on your computer:
 
 - **Your DigitalOcean token** is held by [doctl](https://docs.digitalocean.com/reference/doctl/), DigitalOcean's own command-line tool, in its settings on your computer. This mod never stores it, reads it back or sends it anywhere: it only runs doctl.
-- **The SSH key** is made on your computer for this mod and kept in its folder (or you name your own in the mod's settings). Its public half goes to your DigitalOcean account; the private half never leaves your machine.
+- **Your SSH key** is the one you choose: give the path to your private key and the mod reads only its public half, or let it make a new one in `~/.ssh/6529-validator`, where it survives the mod and backs up like any other key. The public half goes to your DigitalOcean account; the private half never leaves your machine.
 - **Your wallet** signs in your own browser, on the validator's own page, reached through an SSH tunnel to your server.
 - **Nothing on the server reports anywhere.** The pane reads the server's state over your own SSH connection when you look.
 
@@ -53,7 +53,7 @@ Optional: a token with custom scopes limited to what this needs (droplets, SSH k
 | Square | Green when | What fixes it |
 | --- | --- | --- |
 | doctl | doctl is installed and signed in to your account | **install doctl**, then paste a token or **copy sign-in command** |
-| ssh key | the mod's key is on your DigitalOcean account | **add my key to DigitalOcean** (makes the key the first time) |
+| ssh key | the key you chose is on your DigitalOcean account | give your private key's path (or **make a new key**), then **add my key to DigitalOcean** |
 | server | the droplet is active with an address | **+ new server**: pick a region and a size, then **create server** |
 | ssh | the server answers on the key | waits while the server boots; goes red at once if the server refuses the key |
 | setup | the install script finished | runs by itself on first boot, about 5 minutes |
@@ -66,6 +66,8 @@ Optional: a token with custom scopes limited to what this needs (droplets, SSH k
 | signing | the validator signed today | waits for the day's window |
 
 A red square gets a **diagnose with Claude** button. It hands Claude what the squares and the setup log say and asks for the cause and the fix, without changing anything on the server until you agree.
+
+A key with a passphrase works once it is loaded in your SSH agent: run `ssh-add ~/.ssh/your_key` in a terminal (on a Mac, `ssh-add --apple-use-keychain` keeps it across restarts). If its `.pub` is not beside it, make one first with `ssh-keygen -y -f ~/.ssh/your_key > ~/.ssh/your_key.pub` (it asks for the passphrase once).
 
 ## Sizes and cost
 

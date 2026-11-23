@@ -44,6 +44,8 @@ export type Board = {
   logTail: Record<string, string>
   regions: Region[]
   sizes: Size[]
+  /** The private key the servers trust, as the holder chose it; absent until chosen. */
+  keyPath?: string
   at?: string
 }
 
